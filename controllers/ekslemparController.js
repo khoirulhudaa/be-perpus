@@ -68,7 +68,7 @@ exports.createEksemplar = async (req, res) => {
     // Validasi barcode duplikat di sekolah yang sama
     const existing = await Eksemplar.findOne({ where: { registerNumber, schoolId } });
     if (existing) {
-      return res.status(400).json({ success: false, message: "Nomor Register/Barcode sudah terdaftar!" });
+      return res.status(400).json({ success: false, message: "No. barcode sudah terdaftar!" });
     }
 
     // Gunakan data yang sudah dibersihkan

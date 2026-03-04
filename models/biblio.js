@@ -33,7 +33,45 @@ const Biblio = sequelize.define('Biblio', {
   isActive: { type: DataTypes.BOOLEAN, defaultValue: true, field: 'is_active' }
 }, {
   tableName: 'biblio',
-  timestamps: true, // Otomatis handle input_date (createdAt) dan last_update (updatedAt)
+  timestamps: true,
+  indexes: [
+    // 1. Index Dasar Multitenancy & Status
+    // Digunakan di hampir semua query OPAC dan Admin
+    {
+      name: 'idx_biblio_school_active_opac',
+      fields: ['school_id', 'is_active', 'opac_hide']
+    },
+    // 2. Index Pencarian Judul
+    // Mempercepat pencarian katalog berdasarkan judul buku
+    {
+      name: 'idx_biblio_title',
+      fields: ['title']
+    },
+    // 3. Index Identitas Unik Buku (ISBN/ISSN)
+    // Sangat penting untuk integrasi data atau pencegahan duplikasi buku
+    {
+      name: 'idx_biblio_isbn_issn',
+      fields: ['isbn_issn']
+    },
+    // 4. Index Klasifikasi & Nomor Panggil (Call Number)
+    // Digunakan petugas untuk menata buku di rak dan pencarian subjek
+    {
+      name: 'idx_biblio_classification_call',
+      fields: ['school_id', 'classification', 'call_number']
+    },
+    // 5. Index Promosi (Featured Books)
+    // Mempercepat loading buku "Populer" atau "Terbaru" di halaman depan OPAC
+    {
+      name: 'idx_biblio_promoted',
+      fields: ['school_id', 'promoted', 'createdAt']
+    },
+    // 6. Index Publisher & Tahun
+    // Berguna untuk filter laporan stok buku tahunan atau berdasarkan penerbit
+    {
+      name: 'idx_biblio_publisher_year',
+      fields: ['school_id', 'publisher_id', 'publish_year']
+    }
+  ]
 });
 
 module.exports = Biblio;

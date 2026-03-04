@@ -13,6 +13,7 @@ const cpUpload = upload.fields([
 ]);
 
 router.get('/', biblioController.getAllBiblio);
+router.get('/all', biblioController.getBiblioSelection);
 router.post('/', cpUpload, biblioController.createBiblio);
 router.delete('/:id', biblioController.deleteBiblio);
 

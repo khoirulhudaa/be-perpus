@@ -1,8 +1,92 @@
 const Peminjaman = require('../models/peminjam');
 const Eksemplar = require('../models/eksemplar');
 const Biblio = require('../models/biblio');
-const { Op } = require('sequelize');
+const { Op, fn, col, literal } = require('sequelize');
 const moment = require('moment'); 
+const axios = require('axios');
+const KehadiranPerpus = require('../models/kehadiran');
+
+exports.getKunjunganReport = async (req, res) => {
+  try {
+    const { schoolId, year, month, date, page = 1, limit = 10 } = req.query;
+    const offset = (Number(page) - 1) * Number(limit);
+
+    if (!schoolId) {
+      return res.status(400).json({ success: false, message: "School ID is required" });
+    }
+
+    // 1. Membangun Query Filter
+    let whereConditions = { schoolId: Number(schoolId) };
+    
+    if (date) {
+      whereConditions.waktuMasuk = literal(`DATE(waktuMasuk) = '${date}'`);
+    } else if (month && year) {
+      const startDate = `${year}-${month}-01`;
+      const endDate = moment(startDate).endOf('month').format("YYYY-MM-DD");
+      whereConditions.waktuMasuk = {
+        [Op.between]: [startDate + ' 00:00:00', endDate + ' 23:59:59']
+      };
+    } else {
+      const today = moment().format("YYYY-MM-DD");
+      whereConditions.waktuMasuk = literal(`DATE(waktuMasuk) = '${today}'`);
+    }
+
+    // 2. Query Detail (Table) dengan Pagination
+    const { count, rows: history } = await KehadiranPerpus.findAndCountAll({
+      where: whereConditions,
+      order: [['waktuMasuk', 'DESC']],
+      limit: Number(limit),
+      offset: offset
+    });
+
+    // 3. Query Agregasi (Chart) - Ambil data penuh untuk tren
+    const stats = await KehadiranPerpus.findAll({
+      where: whereConditions,
+      attributes: [
+        [literal("DATE(waktuMasuk)"), 'label'],
+        [fn('COUNT', col('id')), 'totalMasuk']
+      ],
+      group: [literal("DATE(waktuMasuk)")],
+      order: [[literal("label"), 'ASC']]
+    });
+
+    // 4. Hitung Summary (Global untuk filter tersebut)
+    const summaryData = await KehadiranPerpus.findAll({
+      where: whereConditions,
+      attributes: [
+        [fn('COUNT', col('id')), 'totalKunjungan'],
+        [literal("COUNT(CASE WHEN userRole = 'student' THEN 1 END)"), 'totalSiswa'],
+        [literal("COUNT(CASE WHEN userRole IN ('teacher', 'guru', 'staf') THEN 1 END)"), 'totalGuru'],
+        [literal("COUNT(CASE WHEN waktuPulang IS NULL THEN 1 END)"), 'masihDiDalam']
+      ],
+      raw: true
+    });
+
+    const summary = summaryData[0] || { totalKunjungan: 0, totalSiswa: 0, totalGuru: 0, masihDiDalam: 0 };
+
+    return res.json({
+      success: true,
+      summary: {
+        totalKunjungan: Number(summary.totalKunjungan || 0),
+        totalSiswa: Number(summary.totalSiswa || 0),
+        totalGuru: Number(summary.totalGuru || 0),
+        masihDiDalam: Number(summary.masihDiDalam || 0)
+      },
+      chartData: stats,
+      tableData: history,
+      pagination: {
+        totalItems: count,
+        totalPages: Math.ceil(count / limit),
+        currentPage: Number(page),
+        limit: Number(limit)
+      }
+    });
+
+  } catch (err) {
+    console.error("REPORT_ERROR_LOG:", err);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+};
 
 exports.getAllPeminjaman = async (req, res) => {
   try {
@@ -188,16 +272,13 @@ exports.pengembalianBuku = async (req, res) => {
 //   }
 // };
 
-const axios = require('axios'); // Pastikan install axios: npm install axios
-
 exports.scanKehadiranPerpus = async (req, res) => {
   const { qrCodeData, mode, schoolId } = req.body;
   const todayStart = moment().startOf('day').toDate();
 
   try {
-    // 1. Panggil API Server User (Student/Guru)
-    // Sesuaikan URL dengan endpoint server backend Anda yang lain
-    const userResponse = await axios.get(`https://be-school.kiraproject.id/validate-card`, {
+    // 1. Panggil API Server User
+    const userResponse = await axios.get(`https://be-school.kiraproject.id/siswa/validate-qr`, {
       params: { qrCodeData, schoolId }
     });
 
@@ -207,26 +288,59 @@ exports.scanKehadiranPerpus = async (req, res) => {
       return res.status(404).json({ success: false, message: 'Kartu tidak terdaftar di sistem pusat' });
     }
 
-    const { user, role } = userData; // Asumsikan server sana mengembalikan data user dan role
+    const { user, role } = userData; 
     const idKey = role === 'student' ? 'studentId' : 'guruId';
 
     if (mode === 'MASUK') {
-      const data = await KehadiranPerpus.create({
+      // --- VALIDASI: CEK APAKAH SUDAH MASUK TAPI BELUM PULANG ---
+      const activeSession = await KehadiranPerpus.findOne({
+        where: { 
+          [idKey]: user.id, 
+          waktuPulang: null, 
+          waktuMasuk: { [Op.gte]: todayStart },
+          schoolId: schoolId
+        }
+      });
+
+      if (activeSession) {
+        return res.status(400).json({ 
+          success: false, 
+          message: `Status Anda berada di perpustakaan. Scan 'PULANG' terlebih dahulu!` 
+        });
+      }
+
+      // --- LOGIKA PEMETAAN IDENTITAS ---
+      let identitasPayload = {
         [idKey]: user.id,
         userRole: role,
         schoolId: schoolId,
+        userName: user.name || user.nama,
         waktuMasuk: new Date(),
-        userName: user.name || user.nama // Simpan nama di lokal untuk cache tampilan cepat
+      };
+
+      if (role === 'student') {
+        identitasPayload.nis = user.nis;
+      } else {
+        identitasPayload.nip = user.nip;
+        identitasPayload.email = user.email;
+      }
+
+      const data = await KehadiranPerpus.create(identitasPayload);
+      
+      return res.json({ 
+        success: true, 
+        message: `Selamat Datang, ${user.name || user.nama}`, 
+        data 
       });
-      return res.json({ success: true, message: `Selamat Datang, ${user.name || user.nama}`, data });
+
     } else {
-      // Logic Pulang tetap sama, mencari data di DB lokal Perpustakaan
+      // Logic Pulang
       const absen = await KehadiranPerpus.findOne({
         where: { [idKey]: user.id, waktuPulang: null, waktuMasuk: { [Op.gte]: todayStart } },
         order: [['createdAt', 'DESC']]
       });
 
-      if (!absen) return res.status(400).json({ success: false, message: 'Data masuk tidak ditemukan' });
+      if (!absen) return res.status(400).json({ success: false, message: 'Data masuk tidak ditemukan atau Anda sudah tercatat pulang' });
       
       await absen.update({ waktuPulang: new Date() });
       return res.json({ success: true, message: `Sampai Jumpa, ${user.name || user.nama}` });
@@ -242,21 +356,49 @@ exports.scanPinjamKiosk = async (req, res) => {
   const { qrCodeData, registerNumber, schoolId } = req.body;
 
   try {
-    // Cari User
-    const user = await Student.findOne({ where: { qrCodeData, schoolId } }) || 
-                 await GuruTendik.findOne({ where: { qrCodeData, schoolId } });
+    // 1. Validasi User ke API Pusat (Axios)
+    const userResponse = await axios.get(`https://be-school.kiraproject.id/siswa/validate-qr`, {
+      params: { qrCodeData, schoolId }
+    });
+
+    const userData = userResponse.data;
+
+    // Jika user tidak ditemukan di server pusat
+    if (!userData.success || !userData.user) {
+      return res.status(404).json({ success: false, message: 'Kartu Anggota tidak terdaftar di sistem pusat' });
+    }
+
+    const { user, role } = userData;
+
+    // 2. Cari Data Buku di DB Lokal
+    const buku = await Eksemplar.findOne({ 
+      where: { registerNumber, schoolId },
+      include: ['Biblio'] // Opsional: Sertakan judul buku untuk pesan response
+    });
     
-    if (!user) return res.status(404).json({ success: false, message: 'Kartu Anggota tidak valid' });
+    if (!buku) {
+      return res.status(404).json({ success: false, message: 'Data buku tidak ditemukan' });
+    }
+    
+    if (buku.status !== 'Tersedia') {
+      return res.status(400).json({ success: false, message: `Buku sedang ${buku.status}` });
+    }
 
-    // Cari Buku
-    const buku = await Eksemplar.findOne({ where: { registerNumber, schoolId } });
-    if (!buku || buku.status !== 'Tersedia') return res.status(400).json({ success: false, message: 'Buku tidak tersedia' });
+    const activeLoans = await Peminjaman.count({ 
+      where: { peminjamId: user.id, status: 'Dipinjam', schoolId } 
+    });
+    if (activeLoans >= 3) { // Angka 3 bisa diambil dari tabel setting
+      return res.status(400).json({ success: false, message: 'Kuota pinjam maksimal (3 buku) telah tercapai.' });
+    }
 
+    // 3. Proses Peminjaman
     const tglKembali = moment().add(7, 'days').toDate();
 
     const pinjam = await Peminjaman.create({
-      peminjamId: qrCodeData, // atau user.id sesuai relasi model Anda
+      // Mapping field sesuai data dari API Pusat
+      peminjamId: user.id, 
       peminjamName: user.name || user.nama,
+      peminjamRole: role,
       eksemplarId: buku.id,
       schoolId,
       tglPinjam: new Date(),
@@ -264,10 +406,19 @@ exports.scanPinjamKiosk = async (req, res) => {
       status: 'Dipinjam'
     });
 
+    // 4. Update Status Buku
     await buku.update({ status: 'Dipinjam' });
-    res.json({ success: true, message: 'Buku berhasil dipinjam', data: pinjam });
+
+    res.json({ 
+      success: true, 
+      message: `Berhasil! ${user.name || user.nama} meminjam buku ${buku.Biblio?.title || registerNumber}`, 
+      data: pinjam 
+    });
+
   } catch (err) {
-    res.status(500).json({ success: false, message: err.message });
+    console.error("Error Scan Pinjam:", err);
+    const errorMsg = err.response?.data?.message || err.message || "Gagal memproses peminjaman";
+    res.status(500).json({ success: false, message: errorMsg });
   }
 };
 
@@ -298,6 +449,23 @@ exports.scanKembaliKiosk = async (req, res) => {
     await buku.update({ status: 'Tersedia' });
 
     res.json({ success: true, message: 'Buku berhasil dikembalikan', denda });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+exports.extendLoan = async (req, res) => {
+  try {
+    const loan = await Peminjaman.findByPk(req.params.id);
+    if (!loan || loan.status !== 'Dipinjam') {
+      return res.status(400).json({ success: false, message: "Hanya buku yang sedang dipinjam yang bisa diperpanjang" });
+    }
+
+    // Tambah 7 hari dari tglKembali sebelumnya
+    const newDeadline = moment(loan.tglKembali).add(7, 'days').format('YYYY-MM-DD');
+    await loan.update({ tglKembali: newDeadline });
+
+    res.json({ success: true, message: "Masa pinjam berhasil diperpanjang 7 hari", newDeadline });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }

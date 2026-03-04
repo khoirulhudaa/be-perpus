@@ -51,21 +51,52 @@ exports.getAllBiblio = async (req, res) => {
   }
 };
 
+exports.getBiblioSelection = async (req, res) => {
+  try {
+    const { schoolId } = req.query;
+    const data = await Biblio.findAll({
+      where: { schoolId, isActive: true },
+      attributes: ['biblioId', 'title', 'isbnIssn'], // Ambil yang perlu saja
+      order: [['title', 'ASC']]
+    });
+    res.json({ success: true, data });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
 exports.createBiblio = async (req, res) => {
   try {
     let imageUrl = null;
     let fileUrl = null;
 
+    // 1. Validasi Sisi Server
+    if (req.files) {
+      if (req.files.image && req.files.image[0].size > 2 * 1024 * 1024) {
+        return res.status(400).json({ success: false, message: "Ukuran gambar maksimal 2MB" });
+      }
+      if (req.files.fileAtt && req.files.fileAtt[0].size > 5 * 1024 * 1024) {
+        return res.status(400).json({ success: false, message: "Ukuran PDF maksimal 5MB" });
+      }
+    }
+
     const uploadToCloudinary = (buffer, resourceType = 'auto') => {
       return new Promise((resolve, reject) => {
-        const stream = cloudinary.uploader.upload_stream({ resource_type: resourceType }, (error, result) => {
-          if (error) reject(error);
-          else resolve(result.secure_url);
-        });
+        const stream = cloudinary.uploader.upload_stream(
+          { 
+            resource_type: resourceType,
+            folder: 'library_assets' // Opsional: kelompokkan dalam folder
+          }, 
+          (error, result) => {
+            if (error) reject(error);
+            else resolve(result.secure_url);
+          }
+        );
         streamifier.createReadStream(buffer).pipe(stream);
       });
     };
 
+    // 2. Proses Upload
     if (req.files && req.files.image) {
       imageUrl = await uploadToCloudinary(req.files.image[0].buffer, 'image');
     }
