@@ -1,5 +1,5 @@
 const { DataTypes } = require("sequelize");
-const sequelize = require("../config/database"); // Sesuaikan dengan config Anda
+const sequelize = require("../config/database");
 const Biblio = require("./biblio");
 
 const Eksemplar = sequelize.define("Eksemplar", {
@@ -7,14 +7,15 @@ const Eksemplar = sequelize.define("Eksemplar", {
     type: DataTypes.INTEGER,
     primaryKey: true,
     autoIncrement: true,
-},
- biblioId: {
+  },
+  biblioId: {
     type: DataTypes.INTEGER,
     allowNull: false,
     field: 'biblio_id', 
     references: {
       model: 'biblio', 
-      key: 'biblioId', 
+      // PERBAIKAN: Gunakan nama kolom fisik di database
+      key: 'biblio_id', 
     },
   },
   registerNumber: {
@@ -48,15 +49,19 @@ const Eksemplar = sequelize.define("Eksemplar", {
   timestamps: true,
 });
 
-// Definisi Relasi
+// --- DEFINISI RELASI ---
+
+// Di Biblio (Parent)
 Biblio.hasMany(Eksemplar, { 
-  foreignKey: "biblioId", // Ini merujuk ke nama properti di objek
-  sourceKey: "biblioId",  // Ini merujuk ke primary key di Biblio
+  foreignKey: "biblioId", // Properti di model Eksemplar
+  sourceKey: "biblioId",  // Properti di model Biblio
   onDelete: "CASCADE" 
 });
+
+// Di Eksemplar (Child)
 Eksemplar.belongsTo(Biblio, { 
-  foreignKey: "biblioId", 
-  targetKey: "biblioId" 
+  foreignKey: "biblioId", // Properti di model Eksemplar
+  targetKey: "biblioId"   // Properti di model Biblio
 });
 
 module.exports = Eksemplar;
