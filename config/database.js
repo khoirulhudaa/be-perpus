@@ -12,11 +12,19 @@ const sequelize = new Sequelize(
     dialectModule: mysql2,
     isolationLevel: Transaction.ISOLATION_LEVELS.REPEATABLE_READ,
     logging: false, 
+    // pool: {
+    //   max: 20,           
+    //   min: 5,            
+    //   acquire: 60000,    
+    //   idle: 10000        
+    // },
+    
+    // setingan vercel saja
     pool: {
-      max: 20,           
-      min: 5,            
-      acquire: 60000,    
-      idle: 10000        
+      max: 5,           // Kecilkan dari 20 ke 5 agar tidak membanjiri koneksi
+      min: 0,           // Biarkan 0 agar koneksi bisa ditutup saat tidak dipakai
+      acquire: 30000,
+      idle: 10000
     },
     dialectOptions: {
       connectTimeout: 60000 
