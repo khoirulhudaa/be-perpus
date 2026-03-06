@@ -4,7 +4,6 @@ const cors = require('cors');
 const path = require('path');
 const fs = require('fs');
 const sequelize = require('./config/database');
-const Biblio = require('./models/biblio');
 
 // Import limiter global saja (karena yang lain sudah di routes/index.js)
 const { globalLimiter } = require('./middlewares/rateLimiter');
