@@ -1,5 +1,6 @@
 require('dotenv').config();
 const { Sequelize, Transaction } = require('sequelize');
+const mysql2 = require('mysql2'); // Tambahkan baris ini
 
 const sequelize = new Sequelize(
   process.env.DB_NAME,
@@ -8,6 +9,7 @@ const sequelize = new Sequelize(
   {
     host: process.env.DB_HOST,
     dialect: 'mysql',
+    dialectModule: mysql2,
     isolationLevel: Transaction.ISOLATION_LEVELS.REPEATABLE_READ,
     logging: false, 
     pool: {
