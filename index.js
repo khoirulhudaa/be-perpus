@@ -89,7 +89,7 @@ const cors = require('cors');
 // const sequelize = require('./config/database');
 
 // Import limiter global saja (karena yang lain sudah di routes/index.js)
-// const { globalLimiter } = require('./middlewares/rateLimiter');
+const { globalLimiter } = require('./middlewares/rateLimiter');
 
 // Import semua routes dari satu file
 const apiRoutes = require('./routes');  // → routes/index.js
@@ -113,7 +113,7 @@ app.use(cors({
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
-// app.use(globalLimiter);
+app.use(globalLimiter);
 
 // JANGAN gunakan fs.mkdirSync di Vercel. 
 // Jika butuh file statis, simpan di folder 'public' dan Vercel akan menyajikannya.
